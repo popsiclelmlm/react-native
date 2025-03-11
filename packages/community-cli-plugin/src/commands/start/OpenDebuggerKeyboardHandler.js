@@ -12,7 +12,6 @@
 import type TerminalReporter from 'metro/src/lib/TerminalReporter';
 
 import chalk from 'chalk';
-import fetch from 'node-fetch';
 
 type PageDescription = $ReadOnly<{
   id: string,
@@ -55,8 +54,11 @@ export default class OpenDebuggerKeyboardHandler {
         'Failed to open debugger for %s (%s): %s',
         target.title,
         target.description,
-        e.message,
+        'Network error',
       );
+      if (e.cause != null) {
+        this.#log('error', 'Cause: %s', e.cause);
+      }
       this.#clearTerminalMenu();
     }
   }

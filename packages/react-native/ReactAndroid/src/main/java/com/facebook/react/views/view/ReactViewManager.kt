@@ -18,6 +18,7 @@ import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.ReadableType
 import com.facebook.react.common.ReactConstants
+import com.facebook.react.internal.featureflags.ReactNativeFeatureFlags
 import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.uimanager.BackgroundStyleApplicator
 import com.facebook.react.uimanager.LengthPercentage
@@ -63,17 +64,23 @@ public open class ReactViewManager : ReactClippingViewManager<ReactViewGroup>() 
   }
 
   init {
-    setupViewRecycling()
+    if (ReactNativeFeatureFlags.enableViewRecyclingForView()) {
+      setupViewRecycling()
+    }
   }
 
   override fun prepareToRecycleView(
       reactContext: ThemedReactContext,
       view: ReactViewGroup
-  ): ReactViewGroup {
+  ): ReactViewGroup? {
+    // We don't want to run the view clipping when the view is being prepared for recycling to avoid
+    // have size changes iterate over child view that should be removed anyway
+    view.removeClippedSubviews = false
+
     // BaseViewManager
     val preparedView = super.prepareToRecycleView(reactContext, view)
     preparedView?.recycleView()
-    return view
+    return preparedView
   }
 
   @ReactProp(name = "accessible")
@@ -207,7 +214,7 @@ public open class ReactViewManager : ReactClippingViewManager<ReactViewGroup>() 
 
   @ReactProp(name = ViewProps.POINTER_EVENTS)
   public open fun setPointerEvents(view: ReactViewGroup, pointerEventsStr: String?) {
-    view.pointerEvents = PointerEvents.parsePointerEvents(pointerEventsStr)
+    view.setPointerEvents(PointerEvents.parsePointerEvents(pointerEventsStr))
   }
 
   @ReactProp(name = "nativeBackgroundAndroid")
@@ -303,7 +310,7 @@ public open class ReactViewManager : ReactClippingViewManager<ReactViewGroup>() 
 
   @ReactProp(name = ViewProps.OVERFLOW)
   public open fun setOverflow(view: ReactViewGroup, overflow: String?) {
-    view.overflow = overflow
+    view.setOverflow(overflow)
   }
 
   @ReactProp(name = "backfaceVisibility")

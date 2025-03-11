@@ -49,7 +49,7 @@ Pod::Spec.new do |s|
                              }
 
   s.dependency "DoubleConversion"
-  s.dependency "fast_float", "6.1.4"
+  s.dependency "fast_float"
   s.dependency "fmt", "11.0.2"
   s.dependency "RCT-Folly", folly_version
   s.dependency "React-jsi"
@@ -57,7 +57,7 @@ Pod::Spec.new do |s|
   s.dependency "React-Core/RCTWebSocket"
   s.dependency "React-RCTNetwork"
 
-  add_dependency(s, "ReactCodegen")
+  add_dependency(s, "React-RCTFBReactNativeSpec")
   add_dependency(s, "React-NativeModulesApple")
   add_dependency(s, "React-jsinspector", :framework_name => 'jsinspector_modern')
   add_dependency(s, "ReactCommon", :subspec => "turbomodule/core", :additional_framework_paths => ["react/nativemodule/core"])

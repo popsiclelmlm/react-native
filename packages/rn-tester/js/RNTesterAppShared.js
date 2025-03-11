@@ -26,6 +26,7 @@ import {
   getExamplesListWithRecentlyUsed,
   initialNavigationState,
 } from './utils/testerStateUtils';
+import ReportFullyDrawnView from '../ReportFullyDrawnView/ReportFullyDrawnView';
 import * as React from 'react';
 import {
   BackHandler,
@@ -97,14 +98,11 @@ const RNTesterApp = ({
       return false;
     };
 
-    BackHandler.addEventListener('hardwareBackPress', handleHardwareBackPress);
-
-    return () => {
-      BackHandler.removeEventListener(
-        'hardwareBackPress',
-        handleHardwareBackPress,
-      );
-    };
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      handleHardwareBackPress,
+    );
+    return () => subscription.remove();
   }, [activeModuleKey, handleBackPress]);
 
   const handleModuleCardPress = React.useCallback(
@@ -301,6 +299,7 @@ const RNTesterApp = ({
           handleNavBarPress={handleNavBarPress}
         />
       </View>
+      <ReportFullyDrawnView />
     </RNTesterThemeContext.Provider>
   );
 };

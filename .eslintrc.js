@@ -36,6 +36,16 @@ module.exports = {
       },
     },
     {
+      files: [
+        './packages/react-native/**/*.{js,flow}',
+        './packages/assets/registry.js',
+      ],
+      parser: 'hermes-eslint',
+      rules: {
+        'lint/no-commonjs-exports': 1,
+      },
+    },
+    {
       files: ['package.json'],
       parser: 'jsonc-eslint-parser',
     },
@@ -112,6 +122,12 @@ module.exports = {
           'error',
           {followExactOptionalPropertyTypes: true},
         ],
+      },
+    },
+    {
+      files: ['**/*-itest{.fb,}.js'],
+      rules: {
+        'lint/no-react-native-imports': 'off',
       },
     },
   ],

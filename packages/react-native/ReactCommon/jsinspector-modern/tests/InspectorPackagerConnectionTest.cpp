@@ -26,8 +26,7 @@
 using namespace ::testing;
 using namespace std::literals::chrono_literals;
 using namespace std::literals::string_literals;
-using folly::dynamic, folly::parseJson, folly::toJson, folly::format,
-    folly::sformat;
+using folly::dynamic, folly::toJson, folly::sformat;
 
 namespace facebook::react::jsinspector_modern {
 
@@ -844,17 +843,6 @@ TEST_F(InspectorPackagerConnectionTest, TestReconnectOnSocketErrorWithNoCode) {
   // Stops attempting to reconnect after closeQuietly
 
   packagerConnection_->closeQuietly();
-}
-
-TEST_F(InspectorPackagerConnectionTest, TestNoReconnectOnConnectionRefused) {
-  // Configure gmock to expect calls in a specific order.
-  InSequence mockCallsMustBeInSequence;
-
-  packagerConnection_->connect();
-  ASSERT_TRUE(webSockets_[0]);
-  webSockets_[0]->getDelegate().didFailWithError(ECONNREFUSED, "Test error");
-  EXPECT_FALSE(webSockets_[0]);
-  EXPECT_FALSE(packagerConnection_->isConnected());
 }
 
 TEST_F(InspectorPackagerConnectionTest, TestUnknownEvent) {

@@ -241,7 +241,7 @@ function getItemLayout(
   data: any,
   index: number,
   horizontal?: boolean,
-): {|index: number, length: number, offset: number|} {
+): {index: number, length: number, offset: number} {
   const [length, separator, header] = horizontal
     ? [HORIZ_WIDTH, 0, HEADER.width]
     : [ITEM_HEIGHT, SEPARATOR_HEIGHT, HEADER.height];
@@ -257,6 +257,7 @@ function renderSmallSwitchOption(
   label: string,
   value: boolean,
   setValue: boolean => void,
+  testID?: string,
 ): null | React.Node {
   if (Platform.isTV) {
     return null;
@@ -265,6 +266,7 @@ function renderSmallSwitchOption(
     <View style={styles.option}>
       <RNTesterText>{label}:</RNTesterText>
       <Switch
+        testID={testID}
         style={styles.smallSwitch}
         value={value}
         onValueChange={setValue}

@@ -9,9 +9,11 @@
  * @oncall react_native
  */
 
-import type {EventReporter} from '../types/EventReporter';
+import type {DebuggerSessionIDs, EventReporter} from '../types/EventReporter';
 import type {Experiments} from '../types/Experiments';
+import type {Logger} from '../types/Logger';
 import type {CreateCustomMessageHandlerFn} from './CustomMessageHandler';
+import type {DeviceOptions} from './Device';
 import type {
   JsonPagesListResponse,
   JsonVersionResponse,
@@ -22,8 +24,11 @@ import type {IncomingMessage, ServerResponse} from 'http';
 // $FlowFixMe[cannot-resolve-module] libdef missing in RN OSS
 import type {Timeout} from 'timers';
 
+import getBaseUrlFromRequest from '../utils/getBaseUrlFromRequest';
 import Device from './Device';
 import nullthrows from 'nullthrows';
+// $FlowFixMe[cannot-resolve-module] libdef missing in RN OSS
+import {monitorEventLoopDelay, performance} from 'perf_hooks';
 // Import these from node:timers to get the correct Flow types.
 // $FlowFixMe[cannot-resolve-module] libdef missing in RN OSS
 import {clearTimeout, setTimeout} from 'timers';
@@ -37,17 +42,29 @@ const WS_DEBUGGER_URL = '/inspector/debug';
 const PAGES_LIST_JSON_URL = '/json';
 const PAGES_LIST_JSON_URL_2 = '/json/list';
 const PAGES_LIST_JSON_VERSION_URL = '/json/version';
-const MAX_PONG_LATENCY_MS = 5000;
-const DEBUGGER_HEARTBEAT_INTERVAL_MS = 10000;
+const HEARTBEAT_TIMEOUT_MS = 60000;
+const HEARTBEAT_INTERVAL_MS = 10000;
+const PROXY_IDLE_TIMEOUT_MS = 10000;
+const EVENT_LOOP_PERF_MEASUREMENT_MS = 5000;
+
+const MIN_PING_TO_REPORT = 500;
+const MIN_EVENT_LOOP_DELAY_TO_REPORT = 500;
 
 const INTERNAL_ERROR_CODE = 1011;
+
+export type GetPageDescriptionsConfig = {
+  requestorRelativeBaseUrl: URL,
+  logNoPagesForConnectedDevice?: boolean,
+};
 
 export interface InspectorProxyQueries {
   /**
    * Returns list of page descriptions ordered by device connection order, then
    * page addition order.
    */
-  getPageDescriptions(): Array<PageDescription>;
+  getPageDescriptions(
+    config: GetPageDescriptionsConfig,
+  ): Array<PageDescription>;
 }
 
 /**
@@ -57,8 +74,8 @@ export default class InspectorProxy implements InspectorProxyQueries {
   // Root of the project used for relative to absolute source path conversion.
   #projectRoot: string;
 
-  /** The base URL to the dev server from the developer machine. */
-  #serverBaseUrl: string;
+  // The base URL to the dev server from the dev-middleware host.
+  #serverBaseUrl: URL;
 
   // Maps device ID to Device instance.
   #devices: Map<string, Device>;
@@ -73,32 +90,68 @@ export default class InspectorProxy implements InspectorProxyQueries {
   // custom message handler factory allowing implementers to handle unsupported CDP messages.
   #customMessageHandler: ?CreateCustomMessageHandlerFn;
 
+  #logger: ?Logger;
+
+  #lastMessageTimestamp: number = 0;
+
+  #trackEventLoopPerf: boolean;
+
+  #eventLoopPerfMeasurementOngoing: boolean = false;
+
   constructor(
     projectRoot: string,
     serverBaseUrl: string,
     eventReporter: ?EventReporter,
     experiments: Experiments,
+    logger?: Logger,
     customMessageHandler: ?CreateCustomMessageHandlerFn,
+    trackEventLoopPerf?: boolean = false,
   ) {
     this.#projectRoot = projectRoot;
-    this.#serverBaseUrl = serverBaseUrl;
+    this.#serverBaseUrl = new URL(serverBaseUrl);
     this.#devices = new Map();
     this.#eventReporter = eventReporter;
     this.#experiments = experiments;
+    this.#logger = logger;
     this.#customMessageHandler = customMessageHandler;
+    this.#trackEventLoopPerf = trackEventLoopPerf;
   }
 
-  getPageDescriptions(): Array<PageDescription> {
+  getPageDescriptions({
+    requestorRelativeBaseUrl,
+    logNoPagesForConnectedDevice = false,
+  }: GetPageDescriptionsConfig): Array<PageDescription> {
     // Build list of pages from all devices.
     let result: Array<PageDescription> = [];
     Array.from(this.#devices.entries()).forEach(([deviceId, device]) => {
-      result = result.concat(
-        device
-          .getPagesList()
-          .map((page: Page) =>
-            this.#buildPageDescription(deviceId, device, page),
+      const devicePages = device
+        .getPagesList()
+        .map((page: Page) =>
+          this.#buildPageDescription(
+            deviceId,
+            device,
+            page,
+            requestorRelativeBaseUrl,
           ),
-      );
+        );
+
+      if (
+        logNoPagesForConnectedDevice &&
+        devicePages.length === 0 &&
+        device.dangerouslyGetSocket()?.readyState === WS.OPEN
+      ) {
+        this.#logger?.warn(
+          `Waiting for a DevTools connection to app='%s' on device='%s'.
+    Try again when it's established. If no connection occurs, try to:
+    - Restart the app
+    - Ensure a stable connection to the device
+    - Ensure that the app is built in a mode that supports debugging`,
+          device.getApp(),
+          device.getName(),
+        );
+      }
+
+      result = result.concat(devicePages);
     });
     return result;
   }
@@ -117,7 +170,14 @@ export default class InspectorProxy implements InspectorProxyQueries {
       pathname === PAGES_LIST_JSON_URL ||
       pathname === PAGES_LIST_JSON_URL_2
     ) {
-      this.#sendJsonResponse(response, this.getPageDescriptions());
+      this.#sendJsonResponse(
+        response,
+        this.getPageDescriptions({
+          requestorRelativeBaseUrl:
+            getBaseUrlFromRequest(request) ?? this.#serverBaseUrl,
+          logNoPagesForConnectedDevice: true,
+        }),
+      );
     } else if (pathname === PAGES_LIST_JSON_VERSION_URL) {
       this.#sendJsonResponse(response, {
         Browser: 'Mobile JavaScript',
@@ -143,8 +203,9 @@ export default class InspectorProxy implements InspectorProxyQueries {
     deviceId: string,
     device: Device,
     page: Page,
+    requestorRelativeBaseUrl: URL,
   ): PageDescription {
-    const {host, protocol} = new URL(this.#serverBaseUrl);
+    const {host, protocol} = requestorRelativeBaseUrl;
     const webSocketScheme = protocol === 'https:' ? 'wss' : 'ws';
 
     const webSocketUrlWithoutProtocol = `${host}${WS_DEBUGGER_URL}?device=${deviceId}&page=${page.id}`;
@@ -190,6 +251,29 @@ export default class InspectorProxy implements InspectorProxyQueries {
     response.end(data);
   }
 
+  /* returns true if proxy didn't receive any messages from
+   * either the device or debugger for PROXY_IDLE_TIMEOUT_MS */
+  #isIdle(): boolean {
+    return (
+      new Date().getTime() - this.#lastMessageTimestamp > PROXY_IDLE_TIMEOUT_MS
+    );
+  }
+
+  #onMessageFromDeviceOrDebugger(message: string): void {
+    // TODO: instead remove this and any other messages in idle state we find
+    // Not using JSON.parse for performance reasons. Worst case, we'll get
+    // less accurate idle state reporting, which we would easily see in data.
+    if (message.includes('"event":"getPages"')) {
+      return;
+    }
+
+    this.#lastMessageTimestamp = new Date().getTime();
+
+    if (this.#trackEventLoopPerf) {
+      this.#trackEventLoopPerfThrottled();
+    }
+  }
+
   // Adds websocket handler for device connections.
   // Device connects to /inspector/device and passes device and app names as
   // HTTP GET params.
@@ -205,57 +289,151 @@ export default class InspectorProxy implements InspectorProxyQueries {
     });
     // $FlowFixMe[value-as-type]
     wss.on('connection', async (socket: WS, req) => {
-      try {
-        const fallbackDeviceId = String(this.#deviceCounter++);
+      const fallbackDeviceId = String(this.#deviceCounter++);
 
-        const query = url.parse(req.url || '', true).query || {};
-        const deviceId = query.device || fallbackDeviceId;
-        const deviceName = query.name || 'Unknown';
-        const appName = query.app || 'Unknown';
+      const query = url.parse(req.url || '', true).query || {};
+      const deviceId = query.device || fallbackDeviceId;
+      const deviceName = query.name || 'Unknown';
+      const appName = query.app || 'Unknown';
+      const isProfilingBuild = query.profiling === 'true';
+
+      try {
+        const deviceRelativeBaseUrl =
+          getBaseUrlFromRequest(req) ?? this.#serverBaseUrl;
 
         const oldDevice = this.#devices.get(deviceId);
+
         let newDevice;
+        const deviceOptions: DeviceOptions = {
+          id: deviceId,
+          name: deviceName,
+          app: appName,
+          socket,
+          projectRoot: this.#projectRoot,
+          eventReporter: this.#eventReporter,
+          createMessageMiddleware: this.#customMessageHandler,
+          deviceRelativeBaseUrl,
+          serverRelativeBaseUrl: this.#serverBaseUrl,
+          isProfilingBuild,
+        };
+
         if (oldDevice) {
-          oldDevice.dangerouslyRecreateDevice(
-            deviceId,
-            deviceName,
-            appName,
-            socket,
-            this.#projectRoot,
-            this.#eventReporter,
-            this.#customMessageHandler,
-          );
+          oldDevice.dangerouslyRecreateDevice(deviceOptions);
           newDevice = oldDevice;
         } else {
-          newDevice = new Device(
-            deviceId,
-            deviceName,
-            appName,
-            socket,
-            this.#projectRoot,
-            this.#eventReporter,
-            this.#customMessageHandler,
-          );
+          newDevice = new Device(deviceOptions);
         }
 
         this.#devices.set(deviceId, newDevice);
 
-        debug(
-          `Got new connection: name=${deviceName}, app=${appName}, device=${deviceId}`,
+        this.#logger?.info(
+          "Connection established to app='%s' on device='%s'.",
+          appName,
+          deviceName,
         );
 
-        socket.on('close', () => {
+        debug(
+          "Got new device connection: name='%s', app=%s, device=%s, via=%s",
+          deviceName,
+          appName,
+          deviceId,
+          deviceRelativeBaseUrl.origin,
+        );
+
+        const debuggerSessionIDs: DebuggerSessionIDs = {
+          appId: newDevice?.getApp() || null,
+          deviceId,
+          deviceName: newDevice?.getName() || null,
+          pageId: null,
+        };
+
+        this.#startHeartbeat({
+          socketName: 'Device',
+          socket,
+          intervalMs: HEARTBEAT_INTERVAL_MS,
+          debuggerSessionIDs,
+          timeoutEventName: 'device_timeout',
+          highPingEventName: 'device_high_ping',
+        });
+
+        socket.on('message', message =>
+          this.#onMessageFromDeviceOrDebugger(message.toString()),
+        );
+
+        socket.on('close', (code: number, reason: string) => {
+          this.#logger?.info(
+            "Connection closed to device='%s' for app='%s' with code='%s' and reason='%s'.",
+            deviceName,
+            appName,
+            String(code),
+            reason,
+          );
+
+          this.#eventReporter?.logEvent({
+            type: 'device_connection_closed',
+            code,
+            reason,
+            isIdle: this.#isIdle(),
+            ...debuggerSessionIDs,
+          });
+
           if (this.#devices.get(deviceId)?.dangerouslyGetSocket() === socket) {
             this.#devices.delete(deviceId);
           }
-          debug(`Device ${deviceName} disconnected.`);
         });
-      } catch (e) {
-        console.error('error', e);
-        socket.close(INTERNAL_ERROR_CODE, e?.toString() ?? 'Unknown error');
+      } catch (error) {
+        this.#logger?.error(
+          "Connection failed to be established with app='%s' on device='%s' with error:",
+          appName,
+          deviceName,
+          error,
+        );
+        socket.close(INTERNAL_ERROR_CODE, error?.toString() ?? 'Unknown error');
       }
     });
     return wss;
+  }
+
+  #trackEventLoopPerfThrottled(): void {
+    if (this.#eventLoopPerfMeasurementOngoing) {
+      return;
+    }
+
+    this.#eventLoopPerfMeasurementOngoing = true;
+
+    // https://nodejs.org/api/perf_hooks.html#performanceeventlooputilizationutilization1-utilization2
+    const eluStart = performance.eventLoopUtilization();
+
+    // https://nodejs.org/api/perf_hooks.html#perf_hooksmonitoreventloopdelayoptions
+    const h = monitorEventLoopDelay({resolution: 20});
+    h.enable();
+
+    setTimeout(() => {
+      const eluEnd = performance.eventLoopUtilization(eluStart);
+      h.disable();
+
+      // The % of time, between eluStart and eluEnd where event loop was busy
+      const eventLoopUtilization = Math.floor(eluEnd.utilization * 100);
+
+      // The max % of continious time between eluStart and eluEnd where event loop was busy
+      const maxEventLoopDelay = Math.floor(
+        (h.max / 1e6 / EVENT_LOOP_PERF_MEASUREMENT_MS) * 100,
+      );
+
+      if (
+        debug.enabled &&
+        maxEventLoopDelay >= MIN_EVENT_LOOP_DELAY_TO_REPORT
+      ) {
+        debug(
+          "High event loop delay in the last %ds- event loop utilization='%d%' max event loop delay='%d%'",
+          EVENT_LOOP_PERF_MEASUREMENT_MS / 1000,
+          eventLoopUtilization,
+          maxEventLoopDelay,
+        );
+      }
+
+      this.#eventLoopPerfMeasurementOngoing = false;
+    }, EVENT_LOOP_PERF_MEASUREMENT_MS).unref();
   }
 
   // Returns websocket handler for debugger connections.
@@ -273,32 +451,85 @@ export default class InspectorProxy implements InspectorProxyQueries {
     });
     // $FlowFixMe[value-as-type]
     wss.on('connection', async (socket: WS, req) => {
-      try {
-        const query = url.parse(req.url || '', true).query || {};
-        const deviceId = query.device;
-        const pageId = query.page;
+      const query = url.parse(req.url || '', true).query || {};
+      const deviceId = query.device;
+      const pageId = query.page;
+      const debuggerRelativeBaseUrl =
+        getBaseUrlFromRequest(req) ?? this.#serverBaseUrl;
+      const device: Device | void = deviceId
+        ? this.#devices.get(deviceId)
+        : undefined;
 
+      const debuggerSessionIDs: DebuggerSessionIDs = {
+        appId: device?.getApp() || null,
+        deviceId,
+        deviceName: device?.getName() || null,
+        pageId,
+      };
+
+      try {
         if (deviceId == null || pageId == null) {
           throw new Error('Incorrect URL - must provide device and page IDs');
         }
 
-        const device = this.#devices.get(deviceId);
         if (device == null) {
           throw new Error('Unknown device with ID ' + deviceId);
         }
 
-        this.#startHeartbeat(socket, DEBUGGER_HEARTBEAT_INTERVAL_MS);
+        this.#logger?.info(
+          "Connection established to DevTools for app='%s' on device='%s'.",
+          device.getApp() || 'unknown',
+          device.getName() || 'unknown',
+        );
+
+        this.#startHeartbeat({
+          socketName: 'DevTools',
+          socket,
+          intervalMs: HEARTBEAT_INTERVAL_MS,
+          debuggerSessionIDs,
+          timeoutEventName: 'debugger_timeout',
+          highPingEventName: 'debugger_high_ping',
+        });
+
+        socket.on('message', message =>
+          this.#onMessageFromDeviceOrDebugger(message.toString()),
+        );
 
         device.handleDebuggerConnection(socket, pageId, {
+          debuggerRelativeBaseUrl,
           userAgent: req.headers['user-agent'] ?? query.userAgent ?? null,
         });
-      } catch (e) {
-        console.error(e);
-        socket.close(INTERNAL_ERROR_CODE, e?.toString() ?? 'Unknown error');
+
+        socket.on('close', (code: number, reason: string) => {
+          this.#logger?.info(
+            "Connection closed to DevTools for app='%s' on device='%s' with code='%s' and reason='%s'.",
+            device.getApp() || 'unknown',
+            device.getName() || 'unknown',
+            String(code),
+            reason,
+          );
+
+          this.#eventReporter?.logEvent({
+            type: 'debugger_connection_closed',
+            code,
+            reason,
+            isIdle: this.#isIdle(),
+            ...debuggerSessionIDs,
+          });
+        });
+      } catch (error) {
+        this.#logger?.error(
+          "Connection failed to be established with DevTools for app='%s' on device='%s' with error:",
+          device?.getApp() || 'unknown',
+          device?.getName() || 'unknown',
+          error,
+        );
+        socket.close(INTERNAL_ERROR_CODE, error?.toString() ?? 'Unknown error');
         this.#eventReporter?.logEvent({
           type: 'connect_debugger_frontend',
           status: 'error',
-          error: e,
+          error,
+          ...debuggerSessionIDs,
         });
       }
     });
@@ -311,9 +542,23 @@ export default class InspectorProxy implements InspectorProxyQueries {
   // where proxies may drop idle connections (e.g., VS Code tunnels).
   //
   // https://datatracker.ietf.org/doc/html/rfc6455#section-5.5.2
-  #startHeartbeat(socket: WS, intervalMs: number) {
-    let shouldSetTerminateTimeout = false;
-    let terminateTimeout = null;
+  #startHeartbeat({
+    socketName,
+    socket,
+    intervalMs,
+    debuggerSessionIDs,
+    timeoutEventName,
+    highPingEventName,
+  }: {
+    socketName: string,
+    socket: WS,
+    intervalMs: number,
+    debuggerSessionIDs: DebuggerSessionIDs,
+    timeoutEventName: 'debugger_timeout' | 'device_timeout',
+    highPingEventName: 'debugger_high_ping' | 'device_high_ping',
+  }) {
+    let latestPingMs = Date.now();
+    let terminateTimeout: ?Timeout;
 
     const pingTimeout: Timeout = setTimeout(() => {
       if (socket.readyState !== WS.OPEN) {
@@ -322,44 +567,77 @@ export default class InspectorProxy implements InspectorProxyQueries {
         return;
       }
 
-      shouldSetTerminateTimeout = true;
-      socket.ping(() => {
-        if (!shouldSetTerminateTimeout) {
-          // Sometimes, this `sent` callback fires later than
-          // the actual pong reply.
-          //
-          // If any message came in between ping `sending` and `sent`,
-          // then the connection exists; and we don't need to do anything.
-          return;
-        }
-
-        shouldSetTerminateTimeout = false;
+      if (!terminateTimeout) {
         terminateTimeout = setTimeout(() => {
           if (socket.readyState !== WS.OPEN) {
+            // May be connecting or closing, try again later.
+            terminateTimeout?.refresh();
             return;
           }
+
           // We don't use close() here because that initiates a closing handshake,
           // which will not complete if the other end has gone away - 'close'
           // would not be emitted.
-          //
           // terminate() emits 'close' immediately, allowing us to handle it and
           // inform any clients.
           socket.terminate();
-        }, MAX_PONG_LATENCY_MS).unref();
-      });
+
+          const isIdle = this.#isIdle();
+
+          this.#logger?.error(
+            "Connection terminated with %s for app='%s' on device='%s' with idle='%s' after not responding for %s seconds.",
+            socketName,
+            debuggerSessionIDs.appId ?? 'unknown',
+            debuggerSessionIDs.deviceName ?? 'unknown',
+            isIdle ? 'true' : 'false',
+            String(HEARTBEAT_TIMEOUT_MS / 1000),
+          );
+
+          this.#eventReporter?.logEvent({
+            type: timeoutEventName,
+            duration: HEARTBEAT_TIMEOUT_MS,
+            isIdle,
+            ...debuggerSessionIDs,
+          });
+        }, HEARTBEAT_TIMEOUT_MS).unref();
+      }
+
+      latestPingMs = Date.now();
+      socket.ping();
     }, intervalMs).unref();
 
-    const onAnyMessageFromDebugger = () => {
-      shouldSetTerminateTimeout = false;
-      terminateTimeout && clearTimeout(terminateTimeout);
+    socket.on('pong', () => {
+      const roundtripDuration = Date.now() - latestPingMs;
+
+      if (debug.enabled && roundtripDuration >= MIN_PING_TO_REPORT) {
+        const isIdle = this.#isIdle();
+
+        debug(
+          "[high ping] [%s] %sms for app='%s' on device='%s' with idle='%s'",
+          socketName.padStart(7).padEnd(8),
+          String(roundtripDuration).padStart(5),
+          debuggerSessionIDs.appId,
+          debuggerSessionIDs.deviceName,
+          isIdle ? 'true' : 'false',
+        );
+
+        this.#eventReporter?.logEvent({
+          type: highPingEventName,
+          duration: roundtripDuration,
+          isIdle,
+          ...debuggerSessionIDs,
+        });
+      }
+
+      terminateTimeout?.refresh();
       pingTimeout.refresh();
-    };
+    });
 
-    socket.on('pong', onAnyMessageFromDebugger);
-    socket.on('message', onAnyMessageFromDebugger);
+    socket.on('message', () => {
+      terminateTimeout?.refresh();
+    });
 
-    socket.on('close', () => {
-      shouldSetTerminateTimeout = false;
+    socket.on('close', (code: number, reason: string) => {
       terminateTimeout && clearTimeout(terminateTimeout);
       clearTimeout(pingTimeout);
     });

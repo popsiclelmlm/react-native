@@ -121,6 +121,15 @@ class EventBeat {
    */
   void setBeatCallback(BeatCallback beatCallback);
 
+  /*
+   * The callback will be executed once a consumer (for example EventQueue)
+   * calls either `EventBeat::request` or `EventBeat::requestSynchronous`. The
+   * callback will be executed on the UI thread.
+   *
+   * If not set, this is a no-op and callback won't be called.
+   */
+  void unstable_setInduceCallback(std::function<void()> callback);
+
  protected:
   /*
    * Induces the next beat to happen as soon as possible.
@@ -129,8 +138,13 @@ class EventBeat {
   void induce() const;
 
   BeatCallback beatCallback_;
+  std::function<void()> induceCallback_;
   std::shared_ptr<OwnerBox> ownerBox_;
-  mutable std::atomic<bool> isRequested_{false};
+
+  /*
+   * Indicates if event beat was requested to avoid redundant requests.
+   */
+  mutable std::atomic<bool> isEventBeatRequested_{false};
 
  private:
   RuntimeScheduler& runtimeScheduler_;

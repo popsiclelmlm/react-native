@@ -53,11 +53,8 @@ internal object NdkConfiguratorUtils {
         if (cmakeArgs.none { it.startsWith("-DANDROID_STL") }) {
           cmakeArgs.add("-DANDROID_STL=c++_shared")
         }
-        // Due to the new NDK toolchain file, the C++ flags gets overridden between compilation
-        // units. This is causing some libraries to don't be compiled with -DANDROID and other
-        // crucial flags. This can be revisited once we bump to NDK 25/26
-        if (cmakeArgs.none { it.startsWith("-DANDROID_USE_LEGACY_TOOLCHAIN_FILE") }) {
-          cmakeArgs.add("-DANDROID_USE_LEGACY_TOOLCHAIN_FILE=ON")
+        if (cmakeArgs.none { it.startsWith("-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES") }) {
+          cmakeArgs.add("-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON")
         }
 
         val architectures = project.getReactNativeArchitectures()
@@ -113,27 +110,40 @@ internal object NdkConfiguratorUtils {
       config: ReactExtension,
       variant: Variant,
       hermesEnabled: Boolean,
+      useThirdPartyJSC: Boolean,
   ) {
     if (config.enableSoCleanup.get()) {
-      val (excludes, includes) = getPackagingOptionsForVariant(hermesEnabled)
+      val (excludes, includes) = getPackagingOptionsForVariant(hermesEnabled, useThirdPartyJSC)
       variant.packaging.jniLibs.excludes.addAll(excludes)
       variant.packaging.jniLibs.pickFirsts.addAll(includes)
     }
   }
 
-  fun getPackagingOptionsForVariant(hermesEnabled: Boolean): Pair<List<String>, List<String>> {
+  fun getPackagingOptionsForVariant(
+      hermesEnabled: Boolean,
+      useThirdPartyJSC: Boolean
+  ): Pair<List<String>, List<String>> {
     val excludes = mutableListOf<String>()
     val includes = mutableListOf<String>()
-    if (hermesEnabled) {
-      excludes.add("**/libjsc.so")
-      excludes.add("**/libjsctooling.so")
-      includes.add("**/libhermes.so")
-      includes.add("**/libhermestooling.so")
-    } else {
-      excludes.add("**/libhermes.so")
-      excludes.add("**/libhermestooling.so")
-      includes.add("**/libjsc.so")
-      includes.add("**/libjsctooling.so")
+    when {
+      hermesEnabled -> {
+        excludes.add("**/libjsc.so")
+        excludes.add("**/libjsctooling.so")
+        includes.add("**/libhermes.so")
+        includes.add("**/libhermestooling.so")
+      }
+      useThirdPartyJSC -> {
+        excludes.add("**/libhermes.so")
+        excludes.add("**/libhermestooling.so")
+        excludes.add("**/libjsctooling.so")
+        includes.add("**/libjsc.so")
+      }
+      else -> {
+        excludes.add("**/libhermes.so")
+        excludes.add("**/libhermestooling.so")
+        includes.add("**/libjsc.so")
+        includes.add("**/libjsctooling.so")
+      }
     }
     return excludes to includes
   }

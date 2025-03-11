@@ -137,6 +137,11 @@ export interface DocumentSelectionState extends EventEmitter {
  */
 export interface TextInputIOSProps {
   /**
+   * If true, the keyboard shortcuts (undo/redo and copy buttons) are disabled. The default value is false.
+   */
+  disableKeyboardShortcuts?: boolean | undefined;
+
+  /**
    * enum('never', 'while-editing', 'unless-editing', 'always')
    * When the clear button should appear on the right side of the text view
    */
@@ -924,6 +929,12 @@ export interface TextInputProps
    * See https://reactnative.dev/docs/inputaccessoryview for more information.
    */
   inputAccessoryViewID?: string | undefined;
+
+  /**
+   * An optional label that overrides the default input accessory view button label.
+   * @platform ios
+   */
+  inputAccessoryViewButtonLabel?: string | undefined;
 
   /**
    * The value to show for the text input. TextInput is a controlled component,

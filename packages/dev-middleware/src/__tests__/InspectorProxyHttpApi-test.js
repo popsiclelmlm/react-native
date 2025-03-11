@@ -15,13 +15,13 @@ import type {
 } from '../inspector-proxy/types';
 
 import DefaultBrowserLauncher from '../utils/DefaultBrowserLauncher';
-import {fetchJson, fetchLocal} from './FetchUtils';
+import {fetchJson, requestLocal} from './FetchUtils';
 import {createDeviceMock} from './InspectorDeviceUtils';
 import {withAbortSignalForEachTest} from './ResourceUtils';
 import {withServerForEachTest} from './ServerUtils';
 
-// Must be greater than or equal to PAGES_POLLING_INTERVAL in `InspectorProxy.js`.
-const PAGES_POLLING_DELAY = 1000;
+// Must be greater than PAGES_POLLING_INTERVAL in `Device.js`
+const PAGES_POLLING_DELAY = 2100;
 
 jest.useFakeTimers();
 
@@ -362,7 +362,7 @@ describe('inspector proxy HTTP API', () => {
 
         jest.advanceTimersByTime(PAGES_POLLING_DELAY);
 
-        const response = await fetchLocal(
+        const response = await requestLocal(
           `${serverRef.serverBaseUrl}${endpoint}`,
         );
         expect(response.headers.get('Content-Length')).not.toBeNull();
@@ -415,10 +415,12 @@ describe('inspector proxy HTTP API', () => {
         );
         openUrl.searchParams.set('target', firstPage.id);
         // Request to open the debugger for the first device
-        const response = await fetchLocal(openUrl.toString(), {method: 'POST'});
+        const response = await requestLocal(openUrl.toString(), {
+          method: 'POST',
+        });
 
         // Ensure the request was handled properly
-        expect(response.status).toBe(200);
+        expect(response.statusCode).toBe(200);
         // Ensure the debugger was launched
         expect(launchDebuggerSpy).toHaveBeenCalledWith(expect.any(String));
       } finally {

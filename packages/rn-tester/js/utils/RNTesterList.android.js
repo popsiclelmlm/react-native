@@ -46,6 +46,11 @@ const Components: Array<RNTesterModuleInfo> = [
     module: require('../examples/Image/ImageExample'),
   },
   {
+    key: 'LayoutConformanceExample',
+    module: require('../examples/LayoutConformance/LayoutConformanceExample')
+      .default,
+  },
+  {
     key: 'JSResponderHandlerExample',
     module: require('../examples/JSResponderHandlerExample/JSResponderHandlerExample'),
   },
@@ -202,7 +207,14 @@ const APIs: Array<RNTesterModuleInfo> = ([
     category: 'UI',
     module: require('../examples/Dimensions/DimensionsExample'),
   },
+  {
+    key: 'DisplayContentsExample',
+    category: 'UI',
+    module: require('../examples/DisplayContents/DisplayContentsExample')
+      .default,
+  },
   // Only show the link for the example if the API is available.
+  // $FlowExpectedError[cannot-resolve-name]
   typeof IntersectionObserver === 'function'
     ? {
         key: 'IntersectionObserver',
@@ -239,6 +251,7 @@ const APIs: Array<RNTesterModuleInfo> = ([
     category: 'UI',
     module: require('../examples/Layout/LayoutExample'),
   },
+  // $FlowExpectedError[cannot-resolve-name]
   typeof MutationObserver === 'function'
     ? {
         key: 'MutationObserver',

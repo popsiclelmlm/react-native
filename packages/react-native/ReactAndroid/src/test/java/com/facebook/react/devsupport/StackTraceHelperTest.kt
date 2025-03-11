@@ -13,11 +13,8 @@ import com.facebook.react.common.annotations.UnstableReactNativeAPI
 import com.facebook.react.interfaces.exceptionmanager.ReactJsExceptionHandler.*
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 
 @OptIn(UnstableReactNativeAPI::class)
-@RunWith(RobolectricTestRunner::class)
 class StackTraceHelperTest {
   @Test
   fun testParseAlternateFormatStackFrameWithMethod() {
@@ -65,10 +62,10 @@ class StackTraceHelperTest {
   }
 
   @Test
-  fun testConvertParsedError() {
-    val error = getParsedErrorTestData()
+  fun testConvertProcessedError() {
+    val error = getProcessedErrorTestData()
 
-    val data = StackTraceHelper.convertParsedError(error)
+    val data = StackTraceHelper.convertProcessedError(error)
     assertThat(data.getString("message")).isEqualTo("error message")
     assertThat(data.getInt("id")).isEqualTo(123)
     assertThat(data.getBoolean("isFatal")).isEqualTo(true)
@@ -83,22 +80,22 @@ class StackTraceHelperTest {
   }
 
   private fun assertStackFrameMap(
-      map: ReadableMap,
+      map: ReadableMap?,
       filename: String,
       methodName: String,
       lineNumber: Int,
       columnNumber: Int
   ) {
-
+    checkNotNull(map)
     assertThat(map.getString("file")).isEqualTo(filename)
     assertThat(map.getString("methodName")).isEqualTo(methodName)
     assertThat(map.getDouble("lineNumber").toInt()).isEqualTo(lineNumber)
     assertThat(map.getDouble("column").toInt()).isEqualTo(columnNumber)
   }
 
-  private fun getParsedErrorTestData(): ParsedError {
+  private fun getProcessedErrorTestData(): ProcessedError {
     val frame1 =
-        object : ParsedError.StackFrame {
+        object : ProcessedError.StackFrame {
           override val file = "file1"
           override val methodName = "method1"
           override val lineNumber = 1
@@ -106,7 +103,7 @@ class StackTraceHelperTest {
         }
 
     val frame2 =
-        object : ParsedError.StackFrame {
+        object : ProcessedError.StackFrame {
           override val file = "file2"
           override val methodName = "method2"
           override val lineNumber = 2
@@ -115,7 +112,7 @@ class StackTraceHelperTest {
 
     val frames = listOf(frame1, frame2)
 
-    return object : ParsedError {
+    return object : ProcessedError {
       override val message = "error message"
       override val originalMessage = null
       override val name = null

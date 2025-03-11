@@ -10,11 +10,13 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
+#import <ranges>
 
 #import <React/RCTAssert.h>
 #import <React/RCTBorderDrawing.h>
 #import <React/RCTBoxShadow.h>
 #import <React/RCTConversions.h>
+#import <React/RCTLinearGradient.h>
 #import <React/RCTLocalizedString.h>
 #import <react/featureflags/ReactNativeFeatureFlags.h>
 #import <react/renderer/components/view/ViewComponentDescriptor.h>
@@ -38,7 +40,7 @@ const CGFloat BACKGROUND_COLOR_ZPOSITION = -1024.0f;
   CALayer *_outlineLayer;
   CALayer *_boxShadowLayer;
   CALayer *_filterLayer;
-  NSMutableArray<CAGradientLayer *> *_gradientLayers;
+  NSMutableArray<CALayer *> *_backgroundImageLayers;
   BOOL _needsInvalidateLayer;
   BOOL _isJSResponder;
   BOOL _removeClippedSubviews;
@@ -62,6 +64,7 @@ const CGFloat BACKGROUND_COLOR_ZPOSITION = -1024.0f;
     _reactSubviews = [NSMutableArray new];
     self.multipleTouchEnabled = YES;
     _useCustomContainerView = NO;
+    _removeClippedSubviews = NO;
   }
   return self;
 }
@@ -227,10 +230,13 @@ const CGFloat BACKGROUND_COLOR_ZPOSITION = -1024.0f;
     needsInvalidateLayer = YES;
   }
 
-  if (oldViewProps.removeClippedSubviews != newViewProps.removeClippedSubviews) {
-    _removeClippedSubviews = newViewProps.removeClippedSubviews;
-    if (_removeClippedSubviews && self.currentContainerView.subviews.count > 0) {
-      _reactSubviews = [NSMutableArray arrayWithArray:self.currentContainerView.subviews];
+  // Disable `removeClippedSubviews` when Fabric View Culling is enabled.
+  if (!ReactNativeFeatureFlags::enableViewCulling()) {
+    if (oldViewProps.removeClippedSubviews != newViewProps.removeClippedSubviews) {
+      _removeClippedSubviews = newViewProps.removeClippedSubviews;
+      if (_removeClippedSubviews && self.currentContainerView.subviews.count > 0) {
+        _reactSubviews = [NSMutableArray arrayWithArray:self.currentContainerView.subviews];
+      }
     }
   }
 
@@ -851,7 +857,8 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
 #endif
   const bool useCoreAnimationBorderRendering =
       borderMetrics.borderColors.isUniform() && borderMetrics.borderWidths.isUniform() &&
-      borderMetrics.borderStyles.isUniform() && borderMetrics.borderRadii.isUniform() &&
+      borderMetrics.borderStyles.isUniform() && borderMetrics.borderStyles.left == BorderStyle::Solid &&
+      borderMetrics.borderRadii.isUniform() &&
       (
           // iOS draws borders in front of the content whereas CSS draws them behind
           // the content. For this reason, only use iOS border drawing when clipping
@@ -876,25 +883,11 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
     layer.backgroundColor = nil;
     if (!_backgroundColorLayer) {
       _backgroundColorLayer = [CALayer layer];
-      _backgroundColorLayer.frame = CGRectMake(0, 0, self.frame.size.width, self.frame.size.height);
       _backgroundColorLayer.zPosition = BACKGROUND_COLOR_ZPOSITION;
       [self.layer addSublayer:_backgroundColorLayer];
     }
-
+    [self shapeLayerToMatchView:_backgroundColorLayer borderMetrics:borderMetrics];
     _backgroundColorLayer.backgroundColor = backgroundColor.CGColor;
-    if (borderMetrics.borderRadii.isUniform()) {
-      _backgroundColorLayer.mask = nil;
-      _backgroundColorLayer.cornerRadius = borderMetrics.borderRadii.topLeft.horizontal;
-      _backgroundColorLayer.cornerCurve = CornerCurveFromBorderCurve(borderMetrics.borderCurves.topLeft);
-    } else {
-      CAShapeLayer *maskLayer =
-          [self createMaskLayer:self.bounds
-                   cornerInsets:RCTGetCornerInsets(
-                                    RCTCornerRadiiFromBorderRadii(borderMetrics.borderRadii), UIEdgeInsetsZero)];
-      _backgroundColorLayer.mask = maskLayer;
-      _backgroundColorLayer.cornerRadius = 0;
-    }
-
     [_backgroundColorLayer removeAllAnimations];
   }
 
@@ -980,20 +973,13 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
     }
 
     _filterLayer = [CALayer layer];
-    _filterLayer.frame = CGRectMake(0, 0, layer.frame.size.width, layer.frame.size.height);
+    [self shapeLayerToMatchView:_filterLayer borderMetrics:borderMetrics];
     _filterLayer.compositingFilter = @"multiplyBlendMode";
     _filterLayer.backgroundColor = [UIColor colorWithRed:multiplicativeBrightness
                                                    green:multiplicativeBrightness
                                                     blue:multiplicativeBrightness
                                                    alpha:self.layer.opacity]
                                        .CGColor;
-    if (borderMetrics.borderRadii.isUniform()) {
-      _filterLayer.cornerRadius = borderMetrics.borderRadii.topLeft.horizontal;
-    } else {
-      RCTCornerInsets cornerInsets =
-          RCTGetCornerInsets(RCTCornerRadiiFromBorderRadii(borderMetrics.borderRadii), UIEdgeInsetsZero);
-      _filterLayer.mask = [self createMaskLayer:self.bounds cornerInsets:cornerInsets];
-    }
     // So that this layer is always above any potential sublayers this view may
     // add
     _filterLayer.zPosition = CGFLOAT_MAX;
@@ -1001,50 +987,20 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
   }
 
   // background image
-  [self clearExistingGradientLayers];
+  [self clearExistingBackgroundImageLayers];
   if (!_props->backgroundImage.empty()) {
-    for (const auto &gradient : _props->backgroundImage) {
-      CAGradientLayer *gradientLayer = [CAGradientLayer layer];
-      NSMutableArray *colors = [NSMutableArray array];
-      NSMutableArray *locations = [NSMutableArray array];
-      for (const auto &colorStop : gradient.colorStops) {
-        if (colorStop.position.has_value()) {
-          auto location = @(colorStop.position.value());
-          UIColor *color = RCTUIColorFromSharedColor(colorStop.color);
-          [colors addObject:(id)color.CGColor];
-          [locations addObject:location];
-        }
+    // iterate in reverse to match CSS specification
+    for (const auto &backgroundImage : std::ranges::reverse_view(_props->backgroundImage)) {
+      if (std::holds_alternative<LinearGradient>(backgroundImage)) {
+        const auto &linearGradient = std::get<LinearGradient>(backgroundImage);
+        CALayer *backgroundImageLayer = [RCTLinearGradient gradientLayerWithSize:self.layer.bounds.size
+                                                                        gradient:linearGradient];
+        [self shapeLayerToMatchView:backgroundImageLayer borderMetrics:borderMetrics];
+        backgroundImageLayer.masksToBounds = YES;
+        backgroundImageLayer.zPosition = BACKGROUND_COLOR_ZPOSITION;
+        [self.layer addSublayer:backgroundImageLayer];
+        [_backgroundImageLayers addObject:backgroundImageLayer];
       }
-      gradientLayer.startPoint = CGPointMake(gradient.startX, gradient.startY);
-      gradientLayer.endPoint = CGPointMake(gradient.endX, gradient.endY);
-
-      if (locations.count > 0) {
-        gradientLayer.locations = locations;
-      }
-      gradientLayer.colors = colors;
-      gradientLayer.frame = layer.bounds;
-
-      // border styling to work with gradient layers
-      if (useCoreAnimationBorderRendering) {
-        gradientLayer.borderWidth = layer.borderWidth;
-        gradientLayer.borderColor = layer.borderColor;
-        gradientLayer.cornerRadius = layer.cornerRadius;
-        gradientLayer.cornerCurve = layer.cornerCurve;
-      } else {
-        CAShapeLayer *maskLayer = [CAShapeLayer layer];
-        CGPathRef path = RCTPathCreateWithRoundedRect(
-            self.bounds,
-            RCTGetCornerInsets(RCTCornerRadiiFromBorderRadii(borderMetrics.borderRadii), UIEdgeInsetsZero),
-            nil);
-        maskLayer.path = path;
-        CGPathRelease(path);
-        gradientLayer.mask = maskLayer;
-      }
-
-      gradientLayer.zPosition = BACKGROUND_COLOR_ZPOSITION;
-
-      [self.layer addSublayer:gradientLayer];
-      [_gradientLayers addObject:gradientLayer];
     }
   }
 
@@ -1055,13 +1011,13 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
     _boxShadowLayer = [CALayer layer];
     [self.layer addSublayer:_boxShadowLayer];
     _boxShadowLayer.zPosition = _borderLayer.zPosition;
-    _boxShadowLayer.frame = RCTGetBoundingRect(_props->boxShadow, self.layer.frame.size);
+    _boxShadowLayer.frame = RCTGetBoundingRect(_props->boxShadow, self.layer.bounds.size);
 
     UIImage *boxShadowImage = RCTGetBoxShadowImage(
         _props->boxShadow,
         RCTCornerRadiiFromBorderRadii(borderMetrics.borderRadii),
         RCTUIEdgeInsetsFromEdgeInsets(borderMetrics.borderWidths),
-        layer);
+        self.layer.bounds.size);
 
     _boxShadowLayer.contents = (id)boxShadowImage.CGImage;
   }
@@ -1106,6 +1062,26 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
   }
 }
 
+// Shapes the given layer to match the shape of this View's layer. This is
+// basically just accounting for size, position, and border radius.
+- (void)shapeLayerToMatchView:(CALayer *)layer borderMetrics:(BorderMetrics)borderMetrics
+{
+  // Bounds is needed here to account for scaling transforms properly and ensure
+  // we do not scale twice
+  layer.frame = CGRectMake(0, 0, self.layer.bounds.size.width, self.layer.bounds.size.height);
+  if (borderMetrics.borderRadii.isUniform()) {
+    layer.mask = nil;
+    layer.cornerRadius = borderMetrics.borderRadii.topLeft.horizontal;
+    layer.cornerCurve = CornerCurveFromBorderCurve(borderMetrics.borderCurves.topLeft);
+  } else {
+    CAShapeLayer *maskLayer = [self
+        createMaskLayer:self.bounds
+           cornerInsets:RCTGetCornerInsets(RCTCornerRadiiFromBorderRadii(borderMetrics.borderRadii), UIEdgeInsetsZero)];
+    layer.mask = maskLayer;
+    layer.cornerRadius = 0;
+  }
+}
+
 - (CAShapeLayer *)createMaskLayer:(CGRect)bounds cornerInsets:(RCTCornerInsets)cornerInsets
 {
   CGPathRef path = RCTPathCreateWithRoundedRect(bounds, cornerInsets, nil);
@@ -1115,16 +1091,16 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
   return maskLayer;
 }
 
-- (void)clearExistingGradientLayers
+- (void)clearExistingBackgroundImageLayers
 {
-  if (_gradientLayers == nil) {
-    _gradientLayers = [NSMutableArray new];
+  if (_backgroundImageLayers == nil) {
+    _backgroundImageLayers = [NSMutableArray new];
     return;
   }
-  for (CAGradientLayer *gradientLayer in _gradientLayers) {
-    [gradientLayer removeFromSuperlayer];
+  for (CALayer *backgroundImageLayer in _backgroundImageLayers) {
+    [backgroundImageLayer removeFromSuperlayer];
   }
-  [_gradientLayers removeAllObjects];
+  [_backgroundImageLayers removeAllObjects];
 }
 
 #pragma mark - Accessibility
@@ -1136,13 +1112,17 @@ static RCTBorderStyle RCTBorderStyleFromOutlineStyle(OutlineStyle outlineStyle)
 
 static NSString *RCTRecursiveAccessibilityLabel(UIView *view)
 {
-  NSMutableString *result = [NSMutableString stringWithString:@""];
+  // Result string is initialized lazily to prevent useless but costly allocations.
+  NSMutableString *result = nil;
   for (UIView *subview in view.subviews) {
     NSString *label = subview.accessibilityLabel;
     if (!label) {
       label = RCTRecursiveAccessibilityLabel(subview);
     }
     if (label && label.length > 0) {
+      if (result == nil) {
+        result = [NSMutableString string];
+      }
       if (result.length > 0) {
         [result appendString:@" "];
       }

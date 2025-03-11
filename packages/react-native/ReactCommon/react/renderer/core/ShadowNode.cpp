@@ -20,6 +20,19 @@
 
 namespace facebook::react {
 
+/*
+ * Runtime shadow node reference updates should only run from one thread at all
+ * times to avoid having more than one shadow tree updating the current fiber
+ * tree simultaneously. This thread_local flag allows enabling the updates for
+ * choses threads.
+ */
+thread_local bool useRuntimeShadowNodeReferenceUpdateOnThread{false}; // NOLINT
+
+/* static */ void ShadowNode::setUseRuntimeShadowNodeReferenceUpdateOnThread(
+    bool isEnabled) {
+  useRuntimeShadowNodeReferenceUpdateOnThread = isEnabled;
+}
+
 ShadowNode::SharedListOfShared ShadowNode::emptySharedShadowNodeSharedList() {
   static const auto emptySharedShadowNodeSharedList =
       std::make_shared<ShadowNode::ListOfShared>();
@@ -308,8 +321,8 @@ void ShadowNode::transferRuntimeShadowNodeReference(
 void ShadowNode::transferRuntimeShadowNodeReference(
     const Shared& destinationShadowNode,
     const ShadowNodeFragment& fragment) const {
-  if (fragment.runtimeShadowNodeReference &&
-      ReactNativeFeatureFlags::useRuntimeShadowNodeReferenceUpdate()) {
+  if (useRuntimeShadowNodeReferenceUpdateOnThread &&
+      fragment.runtimeShadowNodeReference) {
     transferRuntimeShadowNodeReference(destinationShadowNode);
   }
 }
@@ -363,9 +376,10 @@ std::string ShadowNode::getDebugName() const {
 }
 
 std::string ShadowNode::getDebugValue() const {
-  return "r" + folly::to<std::string>(revision_) + "/sr" +
-      folly::to<std::string>(state_ ? state_->getRevision() : 0) +
-      (getSealed() ? "/sealed" : "");
+  return "r" + std::to_string(revision_) + "/sr" +
+      std::to_string(state_ ? state_->getRevision() : 0) +
+      (getSealed() ? "/sealed" : "") +
+      (getProps()->nativeId.empty() ? "" : "/id=" + getProps()->nativeId);
 }
 
 SharedDebugStringConvertibleList ShadowNode::getDebugChildren() const {
@@ -385,7 +399,7 @@ SharedDebugStringConvertibleList ShadowNode::getDebugChildren() const {
 SharedDebugStringConvertibleList ShadowNode::getDebugProps() const {
   return props_->getDebugProps() +
       SharedDebugStringConvertibleList{
-          debugStringConvertibleItem("tag", folly::to<std::string>(getTag()))};
+          debugStringConvertibleItem("tag", std::to_string(getTag()))};
 }
 #endif
 

@@ -58,12 +58,10 @@ Pod::Spec.new do |s|
   s.dependency "React-runtimescheduler"
   s.dependency "React-utils"
   s.dependency "React-featureflags"
+  
+  add_dependency(s, "React-Fabric")
 
-  if ENV["USE_HERMES"] == nil || ENV["USE_HERMES"] == "1"
-    s.dependency "hermes-engine"
-  else
-    s.dependency "React-jsc"
-  end
-
+  depend_on_js_engine(s)
   s.dependency "React-jsinspector"
+  add_dependency(s, "React-jsitooling", :framework_name => "JSITooling")
 end

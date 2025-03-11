@@ -11,7 +11,7 @@
 /* eslint-disable no-alert */
 
 import type {RNTesterModuleExample} from '../../types/RNTesterTypes';
-import type {Props as ModalProps} from 'react-native/Libraries/Modal/Modal';
+import type {ModalProps} from 'react-native/Libraries/Modal/Modal';
 
 import RNTesterButton from '../../components/RNTesterButton';
 import RNTesterText from '../../components/RNTesterText';
@@ -56,6 +56,7 @@ function ModalPresentation() {
     transparent: false,
     hardwareAccelerated: false,
     statusBarTranslucent: false,
+    navigationBarTranslucent: false,
     presentationStyle: Platform.select({
       ios: 'fullScreen',
       default: undefined,
@@ -72,13 +73,14 @@ function ModalPresentation() {
   const presentationStyle = props.presentationStyle;
   const hardwareAccelerated = props.hardwareAccelerated;
   const statusBarTranslucent = props.statusBarTranslucent;
+  const navigationBarTranslucent = props.navigationBarTranslucent;
   const backdropColor = props.backdropColor;
   const backgroundColor = useContext(RNTesterThemeContext).BackgroundColor;
 
   const [currentOrientation, setCurrentOrientation] = useState('unknown');
 
   type OrientationChangeEvent = Parameters<
-    $NonMaybeType<React.PropsOf<Modal>['onOrientationChange']>,
+    $NonMaybeType<ModalProps['onOrientationChange']>,
   >[0];
   const onOrientationChange = (event: OrientationChangeEvent) =>
     setCurrentOrientation(event.nativeEvent.orientation);
@@ -92,8 +94,27 @@ function ModalPresentation() {
         <Switch
           value={statusBarTranslucent}
           onValueChange={enabled =>
-            setProps(prev => ({...prev, statusBarTranslucent: enabled}))
+            setProps(prev => ({
+              ...prev,
+              statusBarTranslucent: enabled,
+              navigationBarTranslucent: false,
+            }))
           }
+        />
+      </View>
+      <View style={styles.inlineBlock}>
+        <RNTesterText style={styles.title}>
+          Navigation Bar Translucent 🟢
+        </RNTesterText>
+        <Switch
+          value={navigationBarTranslucent}
+          onValueChange={enabled => {
+            setProps(prev => ({
+              ...prev,
+              statusBarTranslucent: enabled,
+              navigationBarTranslucent: enabled,
+            }));
+          }}
         />
       </View>
       <View style={styles.inlineBlock}>

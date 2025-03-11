@@ -76,7 +76,7 @@ Pod::Spec.new do |s|
   s.dependency "React-logger"
   s.dependency "glog"
   s.dependency "DoubleConversion"
-  s.dependency "fast_float", "6.1.4"
+  s.dependency "fast_float"
   s.dependency "fmt", "11.0.2"
   s.dependency "React-Core"
   s.dependency "React-debug"
@@ -92,13 +92,8 @@ Pod::Spec.new do |s|
     "react/renderer/components/view/platform/cxx",
     "react/renderer/imagemanager/platform/ios"
   ])
-  add_dependency(s, "ReactCodegen", :additional_framework_paths => ["build/generated/ios"])
 
-  if ENV["USE_HERMES"] == nil || ENV["USE_HERMES"] == "1"
-    s.dependency "hermes-engine"
-  else
-    s.dependency "React-jsc"
-  end
+  depend_on_js_engine(s)
 
   s.subspec "components" do |ss|
 
@@ -137,8 +132,7 @@ Pod::Spec.new do |s|
     ss.subspec "scrollview" do |sss|
       sss.dependency             folly_dep_name, folly_version
       sss.compiler_flags       = folly_compiler_flags
-      sss.source_files         = "react/renderer/components/scrollview/**/*.{m,mm,cpp,h}"
-      sss.exclude_files        = "react/renderer/components/scrollview/tests"
+      sss.source_files         = "react/renderer/components/scrollview/*.{m,mm,cpp,h}"
       sss.header_dir           = "react/renderer/components/scrollview"
 
     end
@@ -155,8 +149,8 @@ Pod::Spec.new do |s|
     ss.subspec "iostextinput" do |sss|
       sss.dependency             folly_dep_name, folly_version
       sss.compiler_flags       = folly_compiler_flags
-      sss.source_files         = "react/renderer/components/textinput/**/*.{m,mm,cpp,h}"
-      sss.exclude_files        = "react/renderer/components/textinput/platform/android"
+      sss.source_files         = "react/renderer/components/textinput/*.{m,mm,cpp,h}",
+                                 "react/renderer/components/textinput/platform/ios/**/*.{m,mm,cpp,h}"
       sss.header_dir           = "react/renderer/components/iostextinput"
 
     end
@@ -195,6 +189,7 @@ Pod::Spec.new do |s|
     {
       :name => '[RN]Check rncore',
       :execution_position => :before_compile,
+      :always_out_of_date => '1',
       :script => <<-EOS
 echo "Checking whether Codegen has run..."
 rncorePath="$REACT_NATIVE_PATH/ReactCommon/react/renderer/components/rncore"

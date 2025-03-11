@@ -63,6 +63,9 @@ public class ArrayPropsNativeComponentManagerDelegate<T extends View, U extends 
       case \\"arrayOfArrayOfObject\\":
         mViewManager.setArrayOfArrayOfObject(view, (ReadableArray) value);
         break;
+      case \\"arrayOfMixed\\":
+        mViewManager.setArrayOfMixed(view, (ReadableArray) value);
+        break;
       default:
         super.setProperty(view, propName, value);
     }
@@ -224,7 +227,7 @@ public class CommandNativeComponentManagerDelegate<T extends View, U extends Bas
         mViewManager.flashScrollIndicators(view);
         break;
       case \\"allTypes\\":
-        mViewManager.allTypes(view, args.getInt(0), (float) args.getDouble(1), args.getDouble(2), args.getString(3), args.getBoolean(4));
+        mViewManager.allTypes(view, args.getInt(0), (float) args.getDouble(1), args.getDouble(2), args.getString(3), args.getBoolean(4), args.getArray(5));
         break;
     }
   }

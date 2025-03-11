@@ -145,6 +145,17 @@ class DeviceEventReporter {
     });
   }
 
+  logProfilingTargetRegistered() {
+    this.#eventReporter.logEvent({
+      type: 'profiling_target_registered',
+      status: 'success',
+      appId: this.#metadata.appId,
+      deviceName: this.#metadata.deviceName,
+      deviceId: this.#metadata.deviceId,
+      pageId: null,
+    });
+  }
+
   logConnection(
     connectedEntity: 'debugger',
     metadata: $ReadOnly<{
@@ -209,6 +220,12 @@ class DeviceEventReporter {
       deviceId: this.#metadata.deviceId,
       deviceName: this.#metadata.deviceName,
       pageId: null,
+    });
+  }
+
+  logFuseboxConsoleNotice(): void {
+    this.#eventReporter.logEvent({
+      type: 'fusebox_console_notice',
     });
   }
 

@@ -98,7 +98,9 @@ const RCTTextInputViewConfig = {
     fontWeight: true,
     fontVariant: true,
     // flowlint-next-line untyped-import:off
-    textShadowOffset: {diff: require('../../Utilities/differ/sizesDiffer')},
+    textShadowOffset: {
+      diff: require('../../Utilities/differ/sizesDiffer').default,
+    },
     allowFontScaling: true,
     fontStyle: true,
     textTransform: true,
@@ -121,6 +123,7 @@ const RCTTextInputViewConfig = {
     },
     editable: true,
     inputAccessoryViewID: true,
+    inputAccessoryViewButtonLabel: true,
     caretHidden: true,
     enablesReturnKeyAutomatically: true,
     placeholderTextColor: {
@@ -139,6 +142,7 @@ const RCTTextInputViewConfig = {
     placeholder: true,
     autoCorrect: true,
     multiline: true,
+    numberOfLines: true,
     textContentType: true,
     maxLength: true,
     autoCapitalize: true,
@@ -161,7 +165,8 @@ const RCTTextInputViewConfig = {
       onChangeSync: true,
       onKeyPressSync: true,
     }),
+    disableKeyboardShortcuts: true,
   },
 };
 
-module.exports = (RCTTextInputViewConfig: PartialViewConfigWithoutName);
+export default RCTTextInputViewConfig as PartialViewConfigWithoutName;

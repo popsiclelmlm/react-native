@@ -10,7 +10,7 @@
 
 'use strict';
 
-import type {PressEvent} from 'react-native/Libraries/Types/CoreEventTypes';
+import type {GestureResponderEvent} from 'react-native/Libraries/Types/CoreEventTypes';
 import type {EventSubscription} from 'react-native/Libraries/vendor/emitter/EventEmitter';
 
 import RNTesterBlock from '../../components/RNTesterBlock';
@@ -1314,6 +1314,7 @@ function SetAccessibilityFocusExample(props: {}): React.Node {
 
   return (
     <View>
+      {/* $FlowFixMe[prop-missing] */}
       <RNTesterText ref={myRef}>
         SetAccessibilityFocus on native element. This should get focus after
         clicking the button!
@@ -1333,18 +1334,6 @@ class EnabledExamples extends React.Component<{}> {
               <EnabledExample
                 test="bold text"
                 eventListener="boldTextChanged"
-              />
-            </RNTesterBlock>
-            <RNTesterBlock title="isGrayScaleEnabled()">
-              <EnabledExample
-                test="gray scale"
-                eventListener="grayscaleChanged"
-              />
-            </RNTesterBlock>
-            <RNTesterBlock title="isInvertColorsEnabled()">
-              <EnabledExample
-                test="invert colors"
-                eventListener="invertColorsChanged"
               />
             </RNTesterBlock>
             <RNTesterBlock title="isReduceTransparencyEnabled()">
@@ -1376,11 +1365,21 @@ class EnabledExamples extends React.Component<{}> {
           />
         </RNTesterBlock>
 
+        <RNTesterBlock title="isInvertColorsEnabled()">
+          <EnabledExample
+            test="invert colors"
+            eventListener="invertColorsChanged"
+          />
+        </RNTesterBlock>
+
         <RNTesterBlock title="isScreenReaderEnabled()">
           <EnabledExample
             test="screen reader"
             eventListener="screenReaderChanged"
           />
+        </RNTesterBlock>
+        <RNTesterBlock title="isGrayScaleEnabled()">
+          <EnabledExample test="gray scale" eventListener="grayscaleChanged" />
         </RNTesterBlock>
       </View>
     );
@@ -1470,7 +1469,7 @@ class EnabledExample extends React.Component<
     this._subscription?.remove();
   }
 
-  _handleToggled = (isEnabled: void | PressEvent | boolean) => {
+  _handleToggled = (isEnabled: void | GestureResponderEvent | boolean) => {
     if (!this.state.isEnabled) {
       this.setState({isEnabled: true});
     } else {
